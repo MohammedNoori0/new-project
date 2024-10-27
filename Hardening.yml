@@ -1,0 +1,207 @@
+---
+- name: Red Hat STIG Hardening
+  hosts: all
+  become: yes  # Ensure tasks run as root
+  tasks:
+    - name: Update system packages
+      yum:
+        name: '*'
+        state: latest
+
+    - name: Disable unused filesystems
+      lineinfile:
+        path: /etc/modprobe.d/disable-{{ item }}.conf
+        line: "install {{ item }} /bin/true"
+      loop:
+        - cramfs
+        - freevxfs
+        - jffs2
+        - hfs
+        - hfsplus
+        - squashfs
+
+    - name: Set password complexity
+      command: authconfig --passalgo=sha512 --update
+
+    - name: Configure password expiration
+      lineinfile:
+        path: /etc/login.defs
+        regexp: '^{{ item.key }}'
+        line: "{{ item.key }} {{ item.value }}"
+      loop:
+        - { key: 'PASS_MAX_DAYS', value: '90' }
+        - { key: 'PASS_MIN_DAYS', value: '7' }
+        - { key: 'PASS_WARN_AGE', value: '14' }
+
+    - name: Lock accounts after 90 days of inactivity
+      lineinfile:
+        path: /etc/default/useradd
+        regexp: '^INACTIVE'
+        line: 'INACTIVE=90'
+
+    - name: Configure SSH settings
+      blockinfile:
+        path: /etc/ssh/sshd_config
+        block: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          ChallengeResponseAuthentication no
+          AllowUsers your_username  # Change to your allowed user
+      notify: restart sshd
+
+    - name: Enable firewall
+      service:
+        name: firewalld
+        enabled: yes
+        state: started
+
+    - name: Set SELinux to enforcing mode
+      command: setenforce 1
+
+    - name: Ensure SELinux is set to enforcing in config
+      lineinfile:
+        path: /etc/selinux/config
+        regexp: '^SELINUX='
+        line: 'SELINUX=enforcing'
+
+    - name: Install and configure AIDE
+      yum:
+        name: aide
+        state: present
+      notify: initialize aide
+
+    - name: Configure audit logging
+      yum:
+        name: audit
+        state: present
+      service:
+        name: auditd
+        enabled: yes
+        state: started
+
+    - name: Add audit rules
+      lineinfile:
+        path: /etc/audit/rules.d/audit.rules
+        line: "-w {{ item }} -p wa -k identity"
+      loop:
+        - /etc/passwd
+        - /etc/shadow
+        - /etc/group
+        - /etc/gshadow
+
+    - name: Enable system logging
+      service:
+        name: rsyslog
+        enabled: yes
+        state: started
+
+    - name: Set time zone to UTC
+      command: timedatectl set-timezone UTC
+
+    - name: Enable NTP synchronization
+      command: timedatectl set-ntp true
+
+    - name: Configure kernel parameters
+      copy:
+        dest: /etc/sysctl.d/99-custom.conf
+        content: |
+          # Disable IP forwarding
+          net.ipv4.ip_forward = 0
+          # Enable IP spoofing protection
+          net.ipv4.conf.all.rp_filter = 1
+          net.ipv4.conf.default.rp_filter = 1
+          # Disable source routed packets
+          net.ipv4.conf.all.accept_source_route = 0
+      notify: reload sysctl
+
+    - name: Disable unnecessary services
+      service:
+        name: "{{ item }}"
+        enabled: no
+      loop:
+        - avahi-daemon
+        - cups
+        - telnet.socket
+
+  handlers:
+    - name: restart sshd
+      service:
+        name: sshd
+        state: restarted
+
+    - name: initialize aide
+      command: aide --init
+
+    - name: reload sysctl
+      command: sysctl -p /etc/sysctl.d/99-custom.conf
+
+    - name: Ensure correct permissions on /etc/passwd
+      file:
+        path: /etc/passwd
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Ensure correct permissions on /etc/shadow
+      file:
+        path: /etc/shadow
+        owner: root
+        group: root
+        mode: '0640'
+
+    - name: Ensure correct permissions on /etc/sudoers
+      file:
+        path: /etc/sudoers
+        owner: root
+        group: root
+        mode: '0440'
+
+    - name: Disable unneeded filesystems
+      lineinfile:
+        path: /etc/modprobe.d/disable-{{ item }}.conf
+        line: "install {{ item }} /bin/true"
+      loop:
+        - cramfs
+        - freevxfs
+        - jffs2
+        - hfs
+        - hfsplus
+        - squashfs
+
+    - name: Ensure auditd is installed
+      yum:
+        name: audit
+        state: present
+
+    - name: Ensure audit rules are present
+      lineinfile:
+        path: /etc/audit/rules.d/audit.rules
+        line: "-w {{ item }} -p wa -k {{ item | basename }}"
+      loop:
+        - /etc/passwd
+        - /etc/shadow
+        - /etc/group
+        - /etc/sudoers
+
+    - name: Ensure only necessary services are running
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - telnet
+        - ftp
+        - avahi-daemon
+
+    - name: Set up automatic updates
+      yum:
+        name: dnf-automatic
+        state: present
+      notify: restart dnf-automatic
+
+      handlers:
+        - name: restart dnf-automatic
+          service:
+            name: dnf-automatic
+            state: restarted
+
