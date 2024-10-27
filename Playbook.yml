@@ -1,0 +1,51 @@
+---
+- name: Ansible Playbook
+  hosts: localhost # This can be changed to target specific hosts or groups
+  become: yes # This allows Ansible to use sudo for privileged operations
+  vars:
+    example_variable: "Hello, Ansible!"
+
+  tasks:
+    - name: Update apt cache (for Debian/Ubuntu)
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install a package
+      package:
+        name: nginx
+        state: present
+
+    - name: Start and enable a service
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Create a directory
+      file:
+        path: /opt/example
+        state: directory
+        mode: "0755"
+
+    - name: Copy a configuration file
+      template:
+        src: templates/example.conf.j2
+        dest: /etc/example.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Run a shell command
+      command: echo "{{ example_variable }}"
+      register: command_output
+
+    - name: Display the command output
+      debug:
+        var: command_output.stdout
+
+  handlers:
+    - name: Restart nginx
+      systemd:
+        name: nginx
+        state: restarted
